@@ -1,0 +1,55 @@
+[project]
+name = "photogrep"
+dynamic = ["version"]
+description = "Search Apple Photos on macOS by what is in the picture, and find which photo an image came from."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Aaron Montgomery" }]
+keywords = ["apple-photos", "macos", "photos", "search", "reverse-image-search", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "numpy>=1.24",
+    "Pillow>=10.0",
+    "pillow-heif>=0.16",
+]
+
+[project.urls]
+Homepage = "https://github.com/Euda1mon1a/photogrep"
+Issues = "https://github.com/Euda1mon1a/photogrep/issues"
+
+[project.scripts]
+photogrep = "photogrep.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/photogrep/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.wheel]
+core-metadata-version = "2.4"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
