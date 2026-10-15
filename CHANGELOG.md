@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-10-14)
 
 - `match` accepts the search filters (`--since`, `--place`, `--label` and the rest) to compare against fewer photos.
 - `labels --json`.
