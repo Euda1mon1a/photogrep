@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -24,6 +25,10 @@ EXAMPLES = """examples:
   photogrep export 1A2B3C4D-0000-0000-0000-000000000000 --to ~/Desktop/picks
   photogrep show 1A2B3C4D-0000-0000-0000-000000000000
 """
+
+
+class Failure(Exception):
+    """A problem the user can fix. Exits with status 2; status 1 means nothing was found, as in grep."""
 
 
 @contextmanager
@@ -48,33 +53,39 @@ def describe(p: Photo) -> str:
             f"{p.filename or '-'}  {p.uuid}  {where}  [{labels}]")
 
 
-def cmd_search(args: argparse.Namespace) -> int:
+def query_from(args: argparse.Namespace) -> Query:
     near = None
     if args.near:
         try:
             lat, lon, km = (float(x) for x in args.near.split(","))
         except ValueError:
-            raise SystemExit("photogrep: --near takes LAT,LON,KM (for example 37.7694,-122.4862,1)")
+            raise Failure("--near takes LAT,LON,KM (for example 37.7694,-122.4862,1)")
         near = (lat, lon, km)
-    q = Query(label=args.label, place=args.place, person=args.person, album=args.album, text=args.text,
-              near=near, since=args.since, until=args.until, min_faces=args.min_faces,
-              max_faces=args.max_faces, min_adults=args.min_adults, min_kids=args.min_kids,
-              max_kids=args.max_kids, landscape=args.landscape, portrait=args.portrait)
+    return Query(label=args.label, place=args.place, person=args.person, album=args.album, text=args.text,
+                 near=near, since=args.since, until=args.until, min_faces=args.min_faces,
+                 max_faces=args.max_faces, min_adults=args.min_adults, min_kids=args.min_kids,
+                 max_kids=args.max_kids, landscape=args.landscape, portrait=args.portrait)
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    q = query_from(args)
     with database(args) as db:
-        hits = search(load_photos(db, args.library), q, args.top)
+        found = search(load_photos(db, args.library), q)
+    hits = found[: args.top] if args.top else found
     if args.json:
         print(json.dumps([p.to_dict() for p in hits], indent=1, ensure_ascii=False))
     else:
         for k, p in enumerate(hits, start=1):
             print(f"{k:3d}  {describe(p)}")
-        print(f"{len(hits)} photo{'s' if len(hits) != 1 else ''}", file=sys.stderr)
+    shown = f"{len(hits)} of {len(found)}" if len(hits) < len(found) else f"{len(found)}"
+    print(f"{shown} photo{'s' if len(found) != 1 else ''}", file=sys.stderr)
     if args.sheet and hits:
         contact_sheet(hits, args.sheet)
         print(f"contact sheet: {args.sheet}", file=sys.stderr)
     if args.export and hits:
         folders = photos_app.export([p.uuid for p in hits], args.export, args.originals)
         print(f"exported {len(folders)} to {args.export}", file=sys.stderr)
-    return 0
+    return 0 if hits else 1
 
 
 def cmd_match(args: argparse.Namespace) -> int:
@@ -83,13 +94,14 @@ def cmd_match(args: argparse.Namespace) -> int:
         try:
             queries.append(match.load_query(path))
         except (OSError, ValueError) as e:
-            raise SystemExit(f"photogrep: {e}")
+            raise Failure(str(e))
     candidates: list[tuple[str, str]] = []
     photos: dict[str, Photo] = {}
     no_preview = 0
+    q = query_from(args)
     if not args.no_library:
         with database(args) as db:
-            for p in load_photos(db, args.library):
+            for p in search(load_photos(db, args.library), q):
                 photos[p.uuid] = p
                 if p.preview:
                     candidates.append((p.uuid, p.preview))
@@ -99,7 +111,7 @@ def cmd_match(args: argparse.Namespace) -> int:
     files = [f for f in match.image_files(args.within) if str(f.resolve()) not in query_paths]
     candidates += [(str(f), str(f)) for f in files]
     if not candidates:
-        raise SystemExit("photogrep: nothing to compare against")
+        raise Failure("nothing to compare against")
     best, compared, failed = match.rank(queries, candidates, top=max(args.top, 1), workers=args.workers,
                                         progress=progress)
     unreadable = no_preview + len(failed)
@@ -113,7 +125,8 @@ def cmd_match(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(report, indent=1, ensure_ascii=False))
         return 0 if all(r["verdict"] == "match" for r in report) else 1
-    pool = ([f"{len(photos):,} library photos"] if not args.no_library else []) + \
+    narrowed = " matching the filters" if q != Query() else ""
+    pool = ([f"{len(photos):,} library photos{narrowed}"] if not args.no_library else []) + \
            ([f"{len(files):,} files"] if args.within else [])
     for r in report:
         print(Path(r["image"]).name)
@@ -141,9 +154,14 @@ def cmd_labels(args: argparse.Namespace) -> int:
     rows = [(n, kind, term) for (kind, term), n in counts.items()
             if not args.like or args.like.lower() in term.lower()]
     rows.sort(key=lambda r: (-r[0], r[2]))
-    for n, kind, term in rows[: args.top]:
-        print(f"{n:7,d}  {kind:6s}  {term}")
-    return 0
+    rows = rows[: args.top] if args.top else rows
+    if args.json:
+        print(json.dumps([{"count": n, "kind": kind, "term": term} for n, kind, term in rows],
+                         indent=1, ensure_ascii=False))
+    else:
+        for n, kind, term in rows:
+            print(f"{n:7,d}  {kind:6s}  {term}")
+    return 0 if rows else 1
 
 
 def resolve_uuid(prefix: str, args: argparse.Namespace) -> str:
@@ -152,7 +170,7 @@ def resolve_uuid(prefix: str, args: argparse.Namespace) -> str:
     with database(args) as db:
         found = [p.uuid for p in load_photos(db, args.library) if p.uuid.lower().startswith(prefix.lower())]
     if len(found) != 1:
-        raise SystemExit(f"photogrep: {prefix} matches {len(found)} photos; give more of the UUID")
+        raise Failure(f"{prefix} matches {len(found)} photos; give more of the UUID")
     return found[0]
 
 
@@ -175,28 +193,33 @@ def parser() -> argparse.ArgumentParser:
                      help="Photos library (default: ~/Pictures/Photos Library.photoslibrary)")
     lib.add_argument("--db-dir", type=Path, help="reuse a folder holding Photos.sqlite and leo.sqlite copies")
 
+    filters = argparse.ArgumentParser(add_help=False)
+    f = filters.add_argument_group("filters (combine with AND; a repeated flag means either)")
+    f.add_argument("--label", action="append", help="scene or event label, any of (Beach, Hike, Party)")
+    f.add_argument("--place", action="append", help="place name, any of (Paris, Yosemite)")
+    f.add_argument("--person", action="append", help="person you have named in Photos, any of")
+    f.add_argument("--album", action="append", help="album or memory title, any of")
+    f.add_argument("--text", action="append", help="word read from the image; all must appear")
+    f.add_argument("--near", metavar="LAT,LON,KM", help="taken within KM of a point")
+    f.add_argument("--since", type=int, metavar="YEAR", help="taken in or after YEAR")
+    f.add_argument("--until", type=int, metavar="YEAR", help="taken in or before YEAR")
+    f.add_argument("--min-faces", type=int, default=0)
+    f.add_argument("--max-faces", type=int)
+    f.add_argument("--min-adults", type=int, default=0)
+    f.add_argument("--min-kids", type=int, default=0)
+    f.add_argument("--max-kids", type=int)
+    f.add_argument("--landscape", action="store_true")
+    f.add_argument("--portrait", action="store_true")
+
     ap = argparse.ArgumentParser(prog="photogrep", epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter,
                                  description="Search Apple Photos by what is in the picture, "
                                              "and find where an image came from.")
     ap.add_argument("--version", action="version", version=f"photogrep {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("search", parents=[lib], help="find photos by labels, places, people, faces and more")
-    s.add_argument("--label", action="append", help="scene or event label, any of (Beach, Hike, Party)")
-    s.add_argument("--place", action="append", help="place name, any of (Paris, Yosemite)")
-    s.add_argument("--person", action="append", help="person you have named in Photos, any of")
-    s.add_argument("--album", action="append", help="album or memory title, any of")
-    s.add_argument("--text", action="append", help="word read from the image; all must appear")
-    s.add_argument("--near", metavar="LAT,LON,KM", help="taken within KM of a point")
-    s.add_argument("--since", type=int, metavar="YEAR", help="taken in or after YEAR")
-    s.add_argument("--until", type=int, metavar="YEAR", help="taken in or before YEAR")
-    s.add_argument("--min-faces", type=int, default=0)
-    s.add_argument("--max-faces", type=int)
-    s.add_argument("--min-adults", type=int, default=0)
-    s.add_argument("--min-kids", type=int, default=0)
-    s.add_argument("--max-kids", type=int)
-    s.add_argument("--landscape", action="store_true")
-    s.add_argument("--portrait", action="store_true")
+    s = sub.add_parser("search", parents=[lib, filters], help="find photos by labels, places, people, faces and more",
+                       description="Find photos by what is in them, best aesthetic score first. "
+                                   "Exit status: 0 found, 1 none found, 2 error.")
     s.add_argument("--top", type=int, default=20, help="how many to show, best first (default 20; 0 for all)")
     s.add_argument("--json", action="store_true")
     s.add_argument("--sheet", type=Path, metavar="FILE.jpg", help="also write a contact sheet")
@@ -204,7 +227,10 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--originals", action="store_true", help="export unedited originals")
     s.set_defaults(func=cmd_search)
 
-    m = sub.add_parser("match", parents=[lib], help="find which photo an image was cut from")
+    m = sub.add_parser("match", parents=[lib, filters], help="find which photo an image was cut from",
+                       description="Find the library photo an image came from. About 90 seconds per image for "
+                                   "64,000 photos; filters narrow the search and speed it up. "
+                                   "Exit status: 0 every image matched, 1 otherwise, 2 error.")
     m.add_argument("images", nargs="+", type=Path, help="image files to look up (crops and resizes are fine)")
     m.add_argument("--in", dest="within", action="append", type=Path, default=[], metavar="DIR",
                    help="also search image files in this folder (repeatable)")
@@ -218,7 +244,8 @@ def parser() -> argparse.ArgumentParser:
     lb = sub.add_parser("labels", parents=[lib], help="list the terms Photos has indexed, most common first")
     lb.add_argument("--kind", action="append", choices=list(KINDS))
     lb.add_argument("--like", help="only terms containing this text")
-    lb.add_argument("--top", type=int, default=50)
+    lb.add_argument("--top", type=int, default=50, help="how many to show (default 50; 0 for all)")
+    lb.add_argument("--json", action="store_true")
     lb.set_defaults(func=cmd_labels)
 
     e = sub.add_parser("export", parents=[lib], help="export full-resolution files through Photos")
@@ -237,7 +264,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser().parse_args(argv)
     try:
         sys.exit(args.func(args))
-    except LibraryError as e:
-        raise SystemExit(f"photogrep: {e}")
+    except (Failure, LibraryError) as e:
+        print(f"photogrep: {e}", file=sys.stderr)
+    except subprocess.CalledProcessError:
+        print("photogrep: Photos did not respond; allow your terminal to control Photos "
+              "(System Settings > Privacy & Security > Automation)", file=sys.stderr)
     except KeyboardInterrupt:
         sys.exit(130)
+    sys.exit(2)
