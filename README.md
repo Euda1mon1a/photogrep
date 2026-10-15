@@ -23,7 +23,8 @@ Everything runs locally. photogrep never writes to your library and makes no net
 Requires macOS 27 or later and Python 3.10 or later.
 
 ```console
-uv tool install photogrep      # or: pipx install photogrep
+uv tool install photogrep               # or: pipx install photogrep
+brew install euda1mon1a/tap/photogrep   # Homebrew
 ```
 
 Your terminal needs **Full Disk Access** (System Settings > Privacy & Security) to read the Photos library. `export` and `show` also ask once for permission to control Photos.
@@ -32,7 +33,7 @@ Your terminal needs **Full Disk Access** (System Settings > Privacy & Security) 
 
 ### search
 
-Filters combine with AND. Repeating a flag (two `--label`s) means either one.
+Filters combine with AND. Repeating a flag (two `--label`s) means either one. `match` takes the same filters.
 
 | Flag | Matches |
 |---|---|
@@ -67,6 +68,8 @@ Scores run up to 1.0. A match scores 0.90 or higher; 0.80 to 0.90 is reported as
 
 How well it works, measured on a real library of about 64,000 photos: 198 random crops (42% to 100% of the original's width, resized, recompressed as JPEG) were each looked up among 598 photos. The source ranked first for all 198; 192 scored as a match and 5 as possible. No other photo scored 0.90; the highest was 0.83. A full pass over the 64,000-photo library takes about 90 seconds on Apple silicon.
 
+If you know roughly where or when the photo is from, add search filters (`--since 2024 --place Paris`) to compare against fewer photos; it runs proportionally faster.
+
 The image needs to cover at least 40% of the original's width. Mirrored, rotated or heavily edited copies will not match, and an image with almost no detail (a patch of sky) is refused rather than guessed at. Burst shots and duplicates of the source can score high, and should.
 
 ### labels
@@ -87,6 +90,16 @@ photogrep show 3F4A5B6C                                # opens Photos on that pi
 ```
 
 Export goes through Photos.app, which downloads the original from iCloud if needed. Without `--originals` you get the current version with your edits applied.
+
+## Scripts and AI agents
+
+photogrep is meant to be driven by other programs, AI coding agents included.
+
+- `--json` on `search`, `match` and `labels` prints results on stdout. Counts and progress go to stderr.
+- Exit status follows grep: 0 when something was found, 1 when nothing was (no photos, no match, no labels), 2 for an error, with the message on stderr.
+- Nothing prompts. Two macOS permissions need a person once: Full Disk Access for the app running photogrep (Terminal, or the agent's host app), and the first `export` or `show` asks to control Photos.
+- `match` takes about 90 seconds per image on a 64,000-photo library, which can outlast a tool-call timeout. Narrow it with filters, or pass several images in one call, which costs less than separate calls.
+- Ask `photogrep labels --like WORD` for the vocabulary first. Photos says "Graduations", not "graduation ceremony".
 
 ## How it works
 

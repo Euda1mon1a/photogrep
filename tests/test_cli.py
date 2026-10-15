@@ -59,11 +59,47 @@ def test_labels(library, capsys):
     assert code == 0 and out.split() == ["1", "scene", "Graduation"]
 
 
-def test_bad_near(library, capsys):
-    with pytest.raises(SystemExit, match="LAT,LON,KM"):
-        main(["search", "--library", str(library), "--near", "21.3"])
+def test_bad_near_is_an_error(library, capsys):
+    code, _, err = run(capsys, "search", "--library", str(library), "--near", "21.3")
+    assert code == 2 and "LAT,LON,KM" in err
 
 
-def test_missing_library(tmp_path):
-    with pytest.raises(SystemExit, match="no Photos library"):
-        main(["search", "--library", str(tmp_path / "none.photoslibrary")])
+def test_missing_library_is_an_error(tmp_path, capsys):
+    code, _, err = run(capsys, "search", "--library", str(tmp_path / "none.photoslibrary"))
+    assert code == 2 and "no Photos library" in err
+
+
+def test_search_nothing_found_exits_1(library, capsys):
+    code, out, err = run(capsys, "search", "--library", str(library), "--label", "Volcano")
+    assert code == 1 and out == "" and err.strip() == "0 photos"
+
+
+def test_search_reports_total_when_limited(library, capsys):
+    code, out, err = run(capsys, "search", "--library", str(library), "--top", "1")
+    assert code == 0 and len(out.splitlines()) == 1 and err.strip() == "1 of 3 photos"
+
+
+def test_labels_json(library, capsys):
+    code, out, _ = run(capsys, "labels", "--library", str(library), "--kind", "place", "--json")
+    assert code == 0 and {r["term"] for r in json.loads(out)} == {"Oahu", "San Francisco"}
+
+
+def test_labels_nothing_found_exits_1(library, capsys):
+    code, out, _ = run(capsys, "labels", "--library", str(library), "--like", "zzz")
+    assert code == 1 and out == ""
+
+
+def test_match_filters_narrow_the_pool(library, preview, tmp_path, capsys):
+    q = tmp_path / "q.jpg"
+    Image.open(preview("22222222-2222-2222-2222-222222222222")).crop((40, 60, 320, 300)).save(q)
+    code, out, _ = run(capsys, "match", str(q), "--library", str(library), "--workers", "1", "--since", "2024")
+    assert code == 1 and "no match among 2 library photos matching the filters" in out
+    code, out, _ = run(capsys, "match", str(q), "--library", str(library), "--workers", "1", "--place", "Francisco")
+    assert code == 0 and "IMG_0002.HEIC" in out
+
+
+def test_unreadable_query_is_an_error(tmp_path, capsys):
+    bad = tmp_path / "bad.jpg"
+    bad.write_bytes(b"nope")
+    code, _, err = run(capsys, "match", str(bad), "--no-library", "--in", str(tmp_path))
+    assert code == 2 and "photogrep:" in err
