@@ -64,7 +64,7 @@ photogrep match screenshot.png --top 3
 photogrep match from-the-deck.jpg --in ~/Downloads
 ```
 
-Scores run up to 1.0. A match scores 0.90 or higher; 0.80 to 0.90 is reported as possible. The exit status is 0 when every image matched and 1 otherwise, like grep. Photos without a readable preview are counted and reported as not compared, never as a non-match. Photos from shared albums and Shared with You are searched too, and labeled as such.
+Scores run up to 1.0. A match scores 0.90 or higher; 0.80 to 0.90 is reported as possible. The exit status is 0 when every image matched, 1 when any image did not (a possible match counts as not matched), and 2 for an error. Photos without a readable preview are counted and reported as not compared, never as a non-match. Photos from shared albums and Shared with You are searched too, and labeled as such.
 
 How well it works, measured on a real library of about 64,000 photos: 198 random crops (42% to 100% of the original's width, resized, recompressed as JPEG) were each looked up among 598 photos. The source ranked first for all 198; 192 scored as a match and 5 as possible. No other photo scored 0.90; the highest was 0.83. A full pass over the 64,000-photo library takes about 90 seconds on Apple silicon.
 
